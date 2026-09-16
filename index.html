@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Ägyptische Multiplikation</title>
+<style>
+  :root {
+    --bg: #1b1f23;
+    --panel: #23282d;
+    --ink: #e8e6df;
+    --muted: #8b9199;
+    --accent: #5fb3a3;
+    --accent-dim: #3a4a47;
+    --used: #5fb3a3;
+    --unused: #3a3f45;
+    --border: #33393f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Iowan Old Style", "Georgia", serif;
+    display: flex;
+    justify-content: center;
+    padding: 40px 16px;
+  }
+  .card {
+    width: 100%;
+    max-width: 560px;
+  }
+  h1 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin: 0 0 4px 0;
+    letter-spacing: 0.2px;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 0.92rem;
+    margin: 0 0 28px 0;
+    line-height: 1.5;
+  }
+  .inputs {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+  input[type=number] {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 1.3rem;
+    padding: 10px 14px;
+    border-radius: 4px;
+    outline: none;
+  }
+  input[type=number]:focus {
+    border-color: var(--accent);
+  }
+  .times {
+    font-size: 1.3rem;
+    color: var(--muted);
+  }
+  button {
+    width: 100%;
+    background: var(--accent);
+    color: #10201d;
+    border: none;
+    font-family: inherit;
+    font-size: 1.05rem;
+    font-weight: 600;
+    padding: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+  button:hover { opacity: 0.88; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 28px;
+    font-size: 0.98rem;
+  }
+  th {
+    text-align: left;
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 0.82rem;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  tr.used td { color: var(--used); font-weight: 600; }
+  tr.unused td { color: var(--unused); }
+  .mark {
+    display: inline-block;
+    width: 18px;
+  }
+
+  .result {
+    margin-top: 24px;
+    padding: 18px;
+    background: var(--panel);
+    border-left: 3px solid var(--accent);
+    border-radius: 2px;
+    font-size: 1.15rem;
+  }
+  .result .eq { color: var(--muted); font-size: 0.9rem; display: block; margin-top: 4px; }
+
+  .hint {
+    margin-top: 32px;
+    color: var(--muted);
+    font-size: 0.85rem;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Ägyptische Multiplikation</h1>
+  <p class="sub">Gib zwei Zahlen ein. Eine wird verdoppelt, die andere halbiert — jede Zeile mit ungeradem Wert wird zum Ergebnis addiert.</p>
+
+  <div class="inputs">
+    <input type="number" id="a" value="17">
+    <span class="times">×</span>
+    <input type="number" id="b" value="23">
+  </div>
+  <button onclick="berechnen()">Berechnen</button>
+
+  <div id="output"></div>
+
+  <p class="hint">Funktioniert auch mit größeren Zahlen. Ist die zweite Zahl ungerade oder negativ, wird intern automatisch getauscht bzw. das Vorzeichen berücksichtigt.</p>
+</div>
+
+<script>
+function berechnen() {
+  let a = parseInt(document.getElementById('a').value, 10);
+  let b = parseInt(document.getElementById('b').value, 10);
+
+  if (isNaN(a) || isNaN(b)) {
+    document.getElementById('output').innerHTML = '<div class="result">Bitte zwei gültige Zahlen eingeben.</div>';
+    return;
+  }
+
+  let vorzeichen = 1;
+  if (b < 0) { vorzeichen = -1; b = -b; }
+
+  const schritte = [];
+  let ergebnis = 0;
+  let av = a, bv = b;
+
+  while (bv > 0) {
+    const ungerade = bv % 2 === 1;
+    if (ungerade) ergebnis += av;
+    schritte.push({a: av, b: bv, used: ungerade});
+    av *= 2;
+    bv = Math.floor(bv / 2);
+  }
+
+  ergebnis *= vorzeichen;
+
+  let rows = schritte.map(s =>
+    `<tr class="${s.used ? 'used' : 'unused'}">
+       <td>${s.a}</td>
+       <td>${s.b}</td>
+       <td><span class="mark">${s.used ? '✓' : '·'}</span></td>
+     </tr>`
+  ).join('');
+
+  document.getElementById('output').innerHTML = `
+    <table>
+      <tr><th>Zahl (verdoppelt)</th><th>Rest (halbiert)</th><th>addiert?</th></tr>
+      ${rows}
+    </table>
+    <div class="result">
+      ${a} × ${b}${vorzeichen < 0 ? ' × (-1)' : ''} = <strong>${ergebnis}</strong>
+      <span class="eq">Summe aller markierten Zeilen in der ersten Spalte</span>
+    </div>
+  `;
+}
+
+berechnen();
+</script>
+</body>
+</html>
