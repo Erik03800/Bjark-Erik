@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hamburg Tracker – Flugzeuge & Schiffe</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root{--bg:#0b1220;--panel:#111a2e;--txt:#e6edf7;--mute:#8a99b5;--air:#38bdf8;--ship:#fb923c}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--txt);font:14px system-ui,sans-serif}
+  #app{display:grid;grid-template-columns:320px 1fr;height:100%}
+  aside{background:var(--panel);padding:16px;overflow:auto;display:flex;flex-direction:column;gap:12px}
+  h1{font-size:18px;margin:0}
+  .row{display:flex;gap:8px;align-items:center;justify-content:space-between}
+  .card{background:#0d1526;border:1px solid #1e2a45;border-radius:10px;padding:10px}
+  .stat{font-size:22px;font-weight:700}
+  .air{color:var(--air)}.ship{color:var(--ship)}
+  input[type=text],input[type=password]{width:100%;padding:8px;border-radius:8px;border:1px solid #26365a;background:#0b1220;color:var(--txt)}
+  button{padding:8px 10px;border-radius:8px;border:0;background:#26365a;color:var(--txt);cursor:pointer}
+  button:hover{background:#31457a}
+  label{display:flex;gap:6px;align-items:center;cursor:pointer}
+  small{color:var(--mute)}
+  #list{display:flex;flex-direction:column;gap:6px;font-size:13px}
+  #list div{padding:6px 8px;border-radius:8px;background:#0d1526;cursor:pointer;border-left:3px solid}
+  #map{height:100%;min-height:300px}
+  .ico{font-size:20px;line-height:1;text-shadow:0 0 4px #000}
+  @media(max-width:760px){#app{grid-template-columns:1fr;grid-template-rows:auto 60vh}}
+</style>
+</head>
+<body>
+<div id="app">
+<aside>
+  <h1>⚓✈️ Hamburg Tracker</h1>
+  <div class="row">
+    <div class="card" style="flex:1"><div class="stat air" id="nAir">0</div><small>Flugzeuge</small></div>
+    <div class="card" style="flex:1"><div class="stat ship" id="nShip">0</div><small>Schiffe</small></div>
+  </div>
+  <div class="card">
+    <label><input type="checkbox" id="tAir" checked> Flugzeuge anzeigen</label>
+    <label><input type="checkbox" id="tShip" checked> Schiffe anzeigen</label>
+    <label><input type="checkbox" id="tTrail" checked> Spuren zeichnen</label>
+  </div>
+  <div class="card">
+    <b>Datenquelle</b><br>
+    <small id="srcAir">Flüge: verbinde …</small><br>
+    <small id="srcShip">Schiffe: Demo-Modus</small>
+    <p style="margin:8px 0 4px"><small>Für echte Schiffsdaten einen kostenlosen API-Key von aisstream.io eintragen:</small></p>
+    <input type="password" id="key" placeholder="AISstream API-Key">
+    <div class="row" style="margin-top:8px"><button id="save">Speichern & verbinden</button><button id="clear">Demo</button></div>
+  </div>
+  <input type="text" id="q" placeholder="Suche: Rufzeichen, Name …">
+  <div id="list"></div>
+  <small>Flugdaten: OpenSky Network (anonym, ca. alle 15 s). Schiffe: AISstream oder simulierte Demo-Schiffe.</small>
+</aside>
+<div id="map"></div>
+</div>
+
+<script>
+const BBOX={lamin:53.2,lomin:9.4,lamax:53.9,lomax:10.6};
+const map=L.map('map',{zoomControl:true}).setView([53.55,9.95],10);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{attribution:'© OpenStreetMap, © CARTO',maxZoom:18}).addTo(map);
+const layers={air:L.layerGroup().addTo(map),ship:L.layerGroup().addTo(map),trail:L.layerGroup().addTo(map)};
+const $=id=>document.getElementById(id);
+const items={air:new Map(),ship:new Map()};
+const icon=(ch,deg,color)=>L.divIcon({className:'',html:`<div class="ico" style="color:${color};transform:rotate(${deg}deg)">${ch}</div>`,iconSize:[20,20],iconAnchor:[10,10]});
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function upsert(type,id,d){
+  const store=items[type];let it=store.get(id);
+  const color=type==='air'?'#38bdf8':'#fb923c';
+  const glyph=type==='air'?'✈':'▲';
+  const rot=type==='air'?(d.hdg||0)-90:(d.hdg||0);
+  if(!it){
+    it={marker:L.marker([d.lat,d.lon],{icon:icon(glyph,rot,color)}).addTo(layers[type]),trail:[],poly:null};
+    store.set(id,it);
+  }
+  it.d=d;it.seen=Date.now();
+  it.marker.setLatLng([d.lat,d.lon]).setIcon(icon(glyph,rot,color));
+  it.marker.bindPopup(`<b>${esc(d.name||id)}</b><br>${d.info||''}`);
+  it.trail.push([d.lat,d.lon]);if(it.trail.length>40)it.trail.shift();
+  if(it.poly)layers.trail.removeLayer(it.poly);
+  it.poly=$('tTrail').checked?L.polyline(it.trail,{color,weight:1.5,opacity:.5}).addTo(layers.trail):null;
+}
+function prune(type,maxAge){
+  const now=Date.now();
+  for(const [id,it] of items[type]){
+    if(now-it.seen>maxAge){layers[type].removeLayer(it.marker);if(it.poly)layers.trail.removeLayer(it.poly);items[type].delete(id);}
+  }
+}
+
+/* ---------- Flugzeuge: OpenSky ---------- */
+async function pollAir(){
+  try{
+    const u=`https://opensky-network.org/api/states/all?lamin=${BBOX.lamin}&lomin=${BBOX.lomin}&lamax=${BBOX.lamax}&lomax=${BBOX.lomax}`;
+    const r=await fetch(u);if(!r.ok)throw new Error(r.status);
+    const j=await r.json();
+    (j.states||[]).forEach(s=>{
+      if(s[6]==null||s[5]==null)return;
+      const alt=s[7]!=null?Math.round(s[7]):null,spd=s[9]!=null?Math.round(s[9]*3.6):null;
+      upsert('air',s[0],{lat:s[6],lon:s[5],hdg:s[10]||0,name:(s[1]||'').trim()||s[0],
+        info:`Land: ${esc(s[2])}<br>Höhe: ${alt??'–'} m<br>Tempo: ${spd??'–'} km/h<br>${s[8]?'Am Boden':'In der Luft'}`});
+    });
+    prune('air',60000);
+    $('srcAir').textContent='Flüge: live (OpenSky) – '+new Date().toLocaleTimeString('de-DE');
+  }catch(e){$('srcAir').textContent='Flüge: Fehler/Limit ('+e.message+'), neuer Versuch …';}
+  refresh();
+}
+setInterval(pollAir,15000);pollAir();
+
+/* ---------- Schiffe: AISstream oder Demo ---------- */
+let ws=null,demoTimer=null;
+function stopShips(){if(ws){ws.close();ws=null}clearInterval(demoTimer);}
+function connectAIS(key){
+  stopShips();
+  ws=new WebSocket('wss://stream.aisstream.io/v0/stream');
+  ws.onopen=()=>{ws.send(JSON.stringify({APIKey:key,BoundingBoxes:[[[BBOX.lamin,BBOX.lomin],[BBOX.lamax,BBOX.lomax]]],FilterMessageTypes:['PositionReport']}));
+    $('srcShip').textContent='Schiffe: live (AISstream)';};
+  ws.onmessage=ev=>{
+    try{const m=JSON.parse(ev.data),p=m.Message&&m.Message.PositionReport;if(!p)return;
+      const name=(m.MetaData.ShipName||'').trim()||String(m.MetaData.MMSI);
+      upsert('ship','m'+m.MetaData.MMSI,{lat:p.Latitude,lon:p.Longitude,hdg:p.TrueHeading<360?p.TrueHeading:p.Cog,name,
+        info:`MMSI: ${m.MetaData.MMSI}<br>Tempo: ${p.Sog} kn<br>Kurs: ${p.Cog}°`});
+      prune('ship',300000);}catch(e){}
+  };
+  ws.onerror=ws.onclose=()=>{if(ws){$('srcShip').textContent='Schiffe: Verbindung fehlgeschlagen → Demo';startDemo();}};
+}
+// Demo: Schiffe fahren entlang der Elbe (grob nachgezeichnet)
+const ELBE=[[53.535,9.93],[53.54,9.88],[53.55,9.82],[53.57,9.75],[53.59,9.68],[53.62,9.6],[53.66,9.52],[53.7,9.45],[53.78,9.3]];
+const NAMES=['MSC HAMBURG','ELBE TRADER','NORDIC STAR','HAPAG EXPRESS','ALSTER JET','CAP SAN LORENZO','ST. PAULI','BALTIC WIND'];
+function startDemo(){
+  stopShips();
+  $('srcShip').textContent='Schiffe: Demo-Modus (simuliert)';
+  const ships=NAMES.map((n,i)=>({name:n,t:Math.random(),dir:i%2?1:-1,v:0.0015+Math.random()*0.002}));
+  const at=t=>{const f=t*(ELBE.length-1),i=Math.min(Math.floor(f),ELBE.length-2),k=f-i;
+    const a=ELBE[i],b=ELBE[i+1];return{lat:a[0]+(b[0]-a[0])*k,lon:a[1]+(b[1]-a[1])*k,hdg:Math.atan2(b[1]-a[1],b[0]-a[0])};};
+  const tick=()=>{ships.forEach((s,i)=>{
+    s.t+=s.dir*s.v;if(s.t>1||s.t<0){s.dir*=-1;s.t=Math.min(1,Math.max(0,s.t));}
+    const p=at(s.t);let h=(90-p.hdg*180/Math.PI);if(s.dir<0)h+=180;
+    upsert('ship','demo'+i,{lat:p.lat+Math.sin(i)*0.002,lon:p.lon,hdg:h%360,name:s.name,info:`Demo-Schiff<br>Tempo: ${(8+i*1.3).toFixed(1)} kn`});});
+    refresh();};
+  tick();demoTimer=setInterval(tick,2000);
+}
+$('save').onclick=()=>{const k=$('key').value.trim();if(!k)return;try{localStorage.setItem('aiskey',k)}catch(e){}connectAIS(k);};
+$('clear').onclick=()=>{try{localStorage.removeItem('aiskey')}catch(e){}$('key').value='';startDemo();};
+let saved=null;try{saved=localStorage.getItem('aiskey')}catch(e){}
+if(saved){$('key').value=saved;connectAIS(saved);}else startDemo();
+
+/* ---------- UI ---------- */
+['tAir','tShip'].forEach(id=>$(id).onchange=()=>{
+  const t=id==='tAir'?'air':'ship';
+  $(id).checked?layers[t].addTo(map):map.removeLayer(layers[t]);
+});
+$('q').oninput=refresh;
+function refresh(){
+  $('nAir').textContent=items.air.size;$('nShip').textContent=items.ship.size;
+  const q=$('q').value.toLowerCase();const out=[];
+  for(const t of ['air','ship'])for(const [id,it] of items[t]){
+    const n=String(it.d.name||id);
+    if(q&&!n.toLowerCase().includes(q))continue;
+    out.push({t,id,n});
+  }
+  out.sort((a,b)=>a.n.localeCompare(b.n));
+  $('list').innerHTML=out.slice(0,60).map(o=>`<div data-t="${o.t}" data-id="${esc(o.id)}" style="border-color:var(--${o.t})">${o.t==='air'?'✈':'⚓'} ${esc(o.n)}</div>`).join('');
+}
+$('list').onclick=e=>{const el=e.target.closest('div[data-id]');if(!el)return;
+  const it=items[el.dataset.t].get(el.dataset.id);if(it){map.setView(it.marker.getLatLng(),13);it.marker.openPopup();}};
+</script>
+</body>
+</html>
